@@ -1,4 +1,9 @@
 # Ragpicker malware crawler
+
+###Main edits
+Just hacked this up a bit to plug into Viper instead of VxCage and did a few other small things. See vagrant repo for vagrant with viper setup and ready to go.
+
+##Back to the show
 Ragpicker is a Plugin based malware crawler with pre-analysis and reporting functionalities. Use this tool if you are testing antivirus products, collecting malware for another analyzer/zoo.
 
 Many thanks to the cuckoo-sandbox team for the Architectural design ideas.

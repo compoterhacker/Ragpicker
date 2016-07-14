@@ -16,47 +16,22 @@ WANTSBASE64 = "True"
 # String -> Dict
 # Form: "key1:value1 ; ke2:value2; ..."
 def returnDictfromString(csvStr):
-    
     userDict = {}
-    
     if csvStr:
-        
-        # Sonderzeichen ';' und ':' muss escaped sein (als ';;' oder '::') damit es durchkommt.
-        
-        # Ersetzen der escapten Zeichen durch temporaere Platzhalter.
-        csvStr = csvStr.replace(";;","~~~") # Die werden gerettet.
-        csvStr = csvStr.replace("::","§§§") # Die werden gerettet.
-        
-        csvStr = csvStr.replace("\\","/") # Das geht leider gar nicht mit dem Backslash.
-        csvStr = csvStr.replace("\"","") # Das '"' geht leider auch nicht.
-        csvStr = csvStr.replace("'","") # Vorsichthalber auch nicht.
-        csvStr = csvStr.replace("{","") # Vorsichthalber auch nicht.
-        csvStr = csvStr.replace("}","") # Vorsichthalber auch nicht.
-        
         # Sanity check.
         if not (";" in csvStr): return {}
-        if not (":" in csvStr): return {}
 
         keypairs = csvStr.split(";")
 
         for keypair in keypairs:
             if (keypair.count(":") == 1):
-                # Der KEY
                 key,pair = keypair.split(':')
                 key = key.split()[0] # Kein Space im Key!
-                key = key.strip().lower() # Mach Kleinbuchstaben daraus.
-                # Im Key werden diese Steuerzeichen nicht geduldet.
-                key.replace("~~~","")
-                key.replace("§§§","")
-                
-                # Das VALUE
-                value = pair.strip()
-                if (value):
-                    if (value != "None"):
-                        # Originalstring wieder hergestellt.
-                        value.replace("~~~",";")
-                        value.replace("§§§",":")
-                        userDict[key] = value
+                key = key.strip().lower() # Kleinbuchstaben!
+                pair = pair.strip().replace("|","")
+                if (pair):
+                    if (pair != "None"):
+                        userDict[key] = pair
     return userDict
 
 # Dict -> String
@@ -64,42 +39,10 @@ def returnDictToString(D):
     returnValue = ""
 
     for k in D:
-        # eventuelle Steuerzeichen im VALUE escapen.
-        # (und im KEY sind keine erlaubt.)
-        D[k].replace(":","::")
-        D[k].replace(";",";;")
-        
-        returnValue += "%s:%s;" % (k, D[k])
+        returnValue += "%s:%s" % (k, D[k])
+        returnValue += "; "
 
     return returnValue
-    
-    
-def removeDuplicates(D_tags):
-    
-    D_new = D_tags.copy()
-    
-    # Duplikate raus
-    for k,v in D_new.items():
-        
-        # Jedes Tag auf multiple Eintraege untersuchen.
-        tokens = [x.strip().rstrip() for x in v.split("|")]
-        if (not tokens): continue
-        
-        # Duplikate raus
-        tokens = list(set(tokens))
-        
-        # Tag-Line wiederherstellen, ohne Duplikate.
-        if (len(tokens) > 1):
-            str_line = tokens[0]
-            for t in tokens[1:]:
-                str_line += " | %s " % (t)
-                D_new[k] = str_line
-            
-        else:
-            D_new[k] = tokens[0]
-    
-    return D_new
-    
 
 #author = "unknown"
 #https://github.com/zmousm/ubnt-nagios-plugins/blob/master/MultiPartForm.py
@@ -191,14 +134,7 @@ class VOMalwareSample:
 
         VERTRAULICH_FREIGEGEBEN = 0
         VERTRAULICH_ABSPRECHEN = 1
-        MAX_VERTRAULICH = 2
-        
-        NORMAL_MODE = 0
-        USE_AS_PACKED = 1
-        
-        ARCH_X86 = "x86"
-        ARCH_X64 = "x64"
-        ARCH_IA64 = "ia64"
+        VERTRAULICH_VERTRAULICH = 2
 
         def __init__(self,
                      sha256="",
@@ -206,48 +142,45 @@ class VOMalwareSample:
                      binType="",
                      downloadDatestamp="",
                      vertraulich=VERTRAULICH_FREIGEGEBEN, # Da es sowieso nur begrenzt viele Leute mit Zugriff gibt, default 0.
-                     architecture = "",
-                     subsystem = "",
-                     imphash = "",
-                     pehash = "",
+                     downloadHostname="",
+                     downloadIP="",
+                     GeolocationHost="",
+                     GeolocationSelf="",
                      tags={},
                      media={},
-                     s_sha256="",
-                     s_sha1="",
-                     s_md5="",
-                     packed = NORMAL_MODE,   # overwrite flag fuer codescanner.
+                     orighash="",
+                     usepacked = 0, # overwrite flag fuer codescanner.
                      base64=False):
 
-            # Sha256 Hash (str sha256)
+            # Sha256 Hash
             self._strsha256 = sha256
 
-            # Urspruenglicher Name des Executables oder "" (str)
+            # Urspruenglicher Name des Executables, sonst "unknown".
             self._strFileName = fileName
 
-            # Dateityp (exe, dll, sys, elf, efi, bin, ...) (str mit 3 Bytes)
+            # Dateityp (exe, dll, sys, elf, efi, bin, ...)
             self._strbinType = binType
 
-            # Zeitstempel des Downloads (str timestamp)
+            # Zeitstempel des Downloads
             self._dtsDownloadDatestamp = downloadDatestamp
 
-            # Ist das Sample vertraulich? (int)
             # 0 = nein. freigegeben,
             # 1 = ja. Unter bestimmten Auflagen/Absprachen eventuell erwaegbar.
             # 2 = ja. Niemals freigegeben.
             # (3+ = reserved)
             self._intVertraulich = vertraulich
 
-            # 32-Bit, 64-Bit, I64 oder "" (str)
-            self._strArchitecture = architecture
-            
-            # PE-Files vor allem. Z.B. WINDOWS_GUI oder NATIVE (str)
-            self._strSubsystem = subsystem
-            
-            # Der imphash (import hash) von einem PE-File. Laenge 32 Bytes. (str md5)
-            self._strImphash = imphash
-            
-            # Der pehash von einem PE-File. Laenge 40 Bytes. (str Sha1)
-            self._strPehash = pehash
+            # Von welcher Domain wurde das Sample geladen
+            self._strDownloadHostname = downloadHostname
+
+            # IP von Host
+            self._strDownloadIP = downloadIP
+
+            # Geoinformation von Host
+            self._strGeolocationHost = GeolocationHost
+
+            # Eigene Geo-Location
+            self._strGeolocationSelf = GeolocationSelf
 
             # User-definierte Tags zum Sample als dictionary.
             # Die Tags koennen auch nur fuer dieses Sample oder wenige spezifisch sein.
@@ -258,17 +191,16 @@ class VOMalwareSample:
             # "Kuerzel" : "Zeus" / "Kuerzel" : "TDL"
             # "targetedAttack" : "True" / "targetedAttack" : "False"
             # "Zeus-Version" : "4.05b"
+
             self._tags = tags
 
             self._media = media
 
-            # Hashes of original packed file
-            self._s_sha256 = s_sha256
-            self._s_sha1 = s_sha1
-            self._s_md5 = s_md5
+            # Hash of original packed file
+            self._orighash = orighash
             
             # Overwrite flag, welches Code-DB anweist, auch Samples mit wenig Code-Anteil aufzunehmen.
-            self._intUsepacked = packed
+            self._intUsepacked = usepacked
 
             # bool base64, default ist False.
             self._boolBase64 = base64
@@ -282,16 +214,14 @@ class VOMalwareSample:
             self.setbinType(http_request.forms.get("binType"))
             self.setDownloadDatestamp(http_request.forms.get("downloadDatestamp"))
             self.setVertraulich(http_request.forms.get("vertraulich"))
-            self.setArchitecture(http_request.forms.get("architecture"))
-            self.setSubsystem(http_request.forms.get("subsystem"))
-            self.setImphash(http_request.forms.get("imphash"))
-            self.setPehash(http_request.forms.get("pehash"))
+            self.setDownloadHostname(http_request.forms.get("downloadHostname"))
+            self.setDownloadIP(http_request.forms.get("downloadIP"))
+            self.setGeolocationHost(http_request.forms.get("GeolocationHost"))
+            self.setGeolocationSelf(http_request.forms.get("GeolocationSelf"))
             self.setTags(http_request.forms.get("tags"))
             self.setMedia(http_request.forms.get("media"))
-            self.set_s_sha256(http_request.forms.get("s_sha256"))
-            self.set_s_sha1(http_request.forms.get("s_sha1"))
-            self.set_s_md5(http_request.forms.get("s_md5"))
-            self.setusepacked(http_request.forms.get("packed"))
+            self.setOrighash(http_request.forms.get("orighash"))
+            self.setusepacked(http_request.forms.get("usepacked"))
             self.setBase64(http_request.forms.get("base64"))
 
         # Werte aus Malware-Objekt zu einem Multipart-Objekt zusammensetzen.
@@ -305,36 +235,16 @@ class VOMalwareSample:
             form.add_field('binType', self.getbinType() or "") # sys, exe, dll, efi, bin, ...
             form.add_field('downloadDatestamp', self.getDownloadDatestamp() or "") # Year:month:day hour:minute works best.
             form.add_field('vertraulich', str(self.getVertraulich()) or "") # int
-            form.add_field('architecture', self.getArchitecture() or "")
-            form.add_field('subsystem', self.getSubsystem() or "")
-            form.add_field('imphash', self.getImphash() or "")
-            form.add_field('pehash', self.getPehash() or "")
+            form.add_field('downloadHostname', self.getDownloadHostname() or "") # where did you get it?
+            form.add_field('downloadIP', self.getDownloadIP() or "") # where did you get it (numerical version)
+            form.add_field('GeolocationHost', self.getGeolocationHost() or "") # Can you provide some geo information?
+            form.add_field('GeolocationSelf', self.getGeolocationSelf() or "") # Location you are promoting to the internet.
             form.add_field('tags', returnDictToString(self.getTags()) or "") # Tags, if any
             form.add_field('media', returnDictToString(self.getMedia()) or "") # Media, if any
-            form.add_field('s_sha256', self.get_s_sha256() or "") # str with 64 length
-            form.add_field('s_sha1', self.get_s_sha1() or "") # str with 40 length
-            form.add_field('s_md5', self.get_s_md5() or "") # str with 32 length
-            form.add_field('packed', str(self.getusepacked()) or "") # int
+            form.add_field('orighash', self.getOrighash() or "") # str with 64 length
+            form.add_field('usepacked', str(self.getusepacked()) or "") # int
             form.add_field('base64', str(self.getBase64()) or "")  # bool
             return form
-
-        def toDict(self):
-            return {'sha256': self.getsha256() or "",
-                    'fileName': self.getFileName() or "",
-                    'binType': self.getbinType() or "",
-                    'downloadDatestamp': self.getDownloadDatestamp() or "",
-                    'vertraulich': str(self.getVertraulich()) or "",
-                    'architecture': self.getArchitecture() or "",
-                    'subsystem': self.getSubsystem() or "",
-                    'imphash': self.getImphash() or "",
-                    'pehash': self.getPehash() or "",
-                    'tags': returnDictToString(self.getTags()) or "",
-                    'media': returnDictToString(self.getMedia()) or "",
-                    's_sha256': self.get_s_sha256() or "",
-                    's_sha1': self.get_s_sha1() or "",
-                    's_md5': self.get_s_md5() or "",
-                    'packed': str(self.getusepacked()) or "",
-                    'base64': str(self.getBase64()) or ""} 
 
 
         # Eigentlich ist alles > 0 erst mal vertraulich.
@@ -343,16 +253,27 @@ class VOMalwareSample:
             if self._intVertraulich: return True
             return False
 
-
-        # Nicht wirklich ausgefuellt. :o)
         def prints(self):
             print "\n------"
-            print "Submitted Malware:"
-            print "Sha256:" ,self.getsha256()
+            print "VOMalware Instance:"
+            print "Base64:", self.getBase64()
+            print "Sha256:", self.getsha256()
+            print "orighash:", self.getOrighash()
             print "Filename:", self.getFileName()
             print "bin type:", self.getbinType()
             print "Date:", self.getDownloadDatestamp()
-            print "..."
+            print "From host:", self.getDownloadHostname()
+            print "IP:", self.getDownloadIP()
+            print "Host location:", self.getGeolocationHost()
+            print "Own location:", self.getGeolocationSelf()
+            print "Media:"
+            D = self.getMedia()
+            for k,v in D.items():
+                print "   ", k, ":", v, " "
+            print "Tags:"
+            D = self.getTags()
+            for k,v in D.items():
+                print "   ", k, ":", v, " "
             print "------\n"
 
         # Getter
@@ -372,17 +293,17 @@ class VOMalwareSample:
         def getVertraulich(self):
             return self._intVertraulich
 
-        def getArchitecture(self):
-            return self._strArchitecture
-            
-        def getSubsystem(self):
-            return self._strSubsystem
-            
-        def getImphash(self):
-            return self._strImphash
-            
-        def getPehash(self):
-            return self._strPehash
+        def getDownloadHostname(self):
+            return self._strDownloadHostname
+
+        def getDownloadIP(self):
+            return self._strDownloadIP
+
+        def getGeolocationHost(self):
+            return self._strGeolocationHost
+
+        def getGeolocationSelf(self):
+            return self._strGeolocationSelf
 
         def getTags(self):
             return self._tags
@@ -390,14 +311,8 @@ class VOMalwareSample:
         def getMedia(self):
             return self._media
 
-        def get_s_sha256(self):
-            return self._s_sha256
-            
-        def get_s_sha1(self):
-            return self._s_sha1
-            
-        def get_s_md5(self):
-            return self._s_md5
+        def getOrighash(self):
+            return self._orighash
             
         def getusepacked(self):
             return self._intUsepacked
@@ -409,22 +324,22 @@ class VOMalwareSample:
 
         def setsha256(self, value):
             if (value):
-                self._strsha256 = str(value)
+                self._strsha256 = value
             else: self._strsha256 = ""
 
         def setFileName(self, value):
             if (value):
-                self._strFileName = str(value)
+                self._strFileName = value
             else: self._strFileName = ""
 
         def setbinType(self, value):
             if (value):
-                self._strbinType = str(value)
+                self._strbinType = value
             else: self._strbinType = ""
 
         def setDownloadDatestamp(self, value):
             if (value):
-                self._dtsDownloadDatestamp = str(value)
+                self._dtsDownloadDatestamp = value
             else: self._dtsDownloadDatestamp = ""
 
         def setVertraulich(self, value):
@@ -432,47 +347,28 @@ class VOMalwareSample:
                 value = str(value) # das sollte auf jedenfall ein String "1" oder "0" sein!
                 if value.isdigit():
                     self._intVertraulich = int(value)
-                    if (self._intVertraulich > self.MAX_VERTRAULICH):
-                        self._intVertraulich = self.MAX_VERTRAULICH
                 else:
                     self._intVertraulich = self.VERTRAULICH_FREIGEGEBEN
 
-        def setArchitecture(self, value):
+        def setDownloadHostname(self, value):
             if (value):
-                self._strArchitecture = str(value)
-                
-                # -- Moeglicherweise zu streng --
-                #~ if (("32-bit" in self._strArchitecture.lower()) or \
-                    #~ ("x86" in self._strArchitecture.lower())):
-                    #~ self._strArchitecture = ARCH_X86
-                #~ if (("64-bit" in self._strArchitecture.lower()) or \
-                    #~ (x64 in self._strArchitecture.lower())):
-                    #~ self._strArchitecture = ARCH_X64
-                #~ 
-                #~ if not ((self._strArchitecture == ARCH_X86) or \
-                        #~ (self._strArchitecture == ARCH_X64) or \
-                        #~ (self._strArchitecture == ARCH_IA64)):
-                    #~ self._strArchitecture = ""
-            else:
-                self._strArchitecture = ""
-                
-        def setSubsystem(self, value):
+                self._strDownloadHostname = value
+            else: self._strDownloadHostname = ""
+
+        def setDownloadIP(self, value):
             if (value):
-                self._strSubsystem = str(value)
-            else:
-                self._strSubsystem = ""
-                
-        def setImphash(self, value):
+                self._strDownloadIP = value
+            else: self._strDownloadIP = ""
+
+        def setGeolocationHost(self, value):
             if (value):
-                self._strImphash = str(value)
-            else:
-                self._strImphash = ""
-                
-        def setPehash(self, value):
+                self._strGeolocationHost = value
+            else: self._strGeolocationHost = ""
+
+        def setGeolocationSelf(self, value):
             if (value):
-                self._strPehash = str(value)
-            else:
-                self._strPehash = ""
+                self._strGeolocationSelf = value
+            else: self._strGeolocationSelf = ""
 
         def setTags(self, value):
             if value:
@@ -502,33 +398,14 @@ class VOMalwareSample:
             else:
                 self._media = {}
 
-        def set_s_sha256(self, value):
+        def setOrighash(self, value):
             if (value):
-                value = str(value).rstrip()
+                value = value.rstrip()
                 if (len(value) == 64):
-                    self._s_sha256 = value
-                else: self._s_sha256 = ""
+                    self._orighash = value
+                else: self._orighash = ""
             else:
-                self._s_sha256 = ""
-                
-                
-        def set_s_sha1(self, value):
-            if (value):
-                value = str(value).rstrip()
-                if (len(value) == 40):
-                    self._s_sha1 = value
-                else: self._s_sha1 = ""
-            else:
-                self._s_sha1 = ""
-                
-        def set_s_md5(self, value):
-            if (value):
-                value = str(value).rstrip()
-                if (len(value) == 32):
-                    self._s_md5 = value
-                else: self._s_md5 = ""
-            else:
-                self._s_md5 = ""
+                self._orighash = ""
                 
         def setusepacked(self, value):
             if value:
@@ -536,13 +413,9 @@ class VOMalwareSample:
                 if (value.isdigit()):
                     self._intUsepacked = int(value)
                 else:
-                    self._sintUsepacked = self.NORMAL_MODE
-            else:
-                self._intUsepacked = self.NORMAL_MODE
-            
+                    self._sintUsepacked = 0
 
         def setBase64(self, value):
-            value = str(value)
             if (value == WANTSBASE64):
                 self._boolBase64 = True
             else: # Leere Strings, "0" oder alles andere.

@@ -52,7 +52,7 @@ from urllib import urlencode
 from zipfile import ZipFile
 from core.config import Config
 from core.database import Database
-from core.vxCageHandler import VxCageHandler
+from core.viperHandler import ViperHandler
 from core.constants import RAGPICKER_ROOT
 from core.commonutils import DatetimeHandler
 from core.commonutils import UUIDHandler
@@ -67,8 +67,8 @@ cfgReporting = Config(os.path.join(RAGPICKER_ROOT, 'config', 'reporting.conf'))
 # Typedef: POST /sample/tags/update (sha256,tags(string)) -> json(Status=status_string)
 CODE_DB_URL_TAG = "https://%s:%s/sample/tags/update"
 
-# Import Ragpicker-Data in VxCage and MongoDB
-def ragpickerImport(zipFile, database, vxcage):
+# Import Ragpicker-Data in Viper and MongoDB
+def ragpickerImport(zipFile, database, viper):
     log.info(zipFile)
     try:
         # crate temp-dir
@@ -105,18 +105,18 @@ def ragpickerImport(zipFile, database, vxcage):
                     database.insertFamily(report)
                     log.info("Import Family-Report: " + file)                
             else:
-                # Import malware-file in VxCage
-                if vxcage.isFileInCage(sha256 = file) == False:
-                    vxcage.upload(os.path.join(tmpPath, file), file, "ragpicker, import")
-                    log.info("Import VxCage:  " + file)
+                # Import malware-file in Viper
+                if viper.isFileInCage(sha256 = file) == False:
+                    viper.upload(os.path.join(tmpPath, file), file, "ragpicker, import")
+                    log.info("Import Viper:  " + file)
     except Exception as msg:
         log.exception(msg)
     finally:
         # finally delete temp-dir
         shutil.rmtree(tmpPath, ignore_errors=True)
 
-# Function for export Ragpicker-Data from VxCage and MongoDB to zip-file
-def rapickerExport(sha256, dumpDir, database, vxCage):    
+# Function for export Ragpicker-Data from Viper and MongoDB to zip-file
+def rapickerExport(sha256, dumpDir, database, viper):    
     #check sh256
     if (len(sha256.rstrip()) != 64):
         raise Exception("%s is not a sha256!" % sha256) 
@@ -131,8 +131,8 @@ def rapickerExport(sha256, dumpDir, database, vxCage):
         tmpPath = getTmpPath("export_")
         tmpPath = os.path.normpath(tmpPath) + os.sep
         
-        # export file from vxcage -> temp-dir
-        vxCage.exportVxCage(sha256, tmpPath)
+        # export file from viper -> temp-dir
+        viper.exportViper(sha256, tmpPath)
         
         # export json-reports from mongodb -> temp dir
         for report in database.iterateRagpickerReports(sha256):
@@ -261,12 +261,26 @@ def iterateSha256File(fileName, isJson):
     
     file.close()
 
+def submitTag(sha256, tags, config):
+    headers = {"Authorization" : "Basic %s" % base64.encodestring("%s:%s" % (config.get("user"), 
+                                                                             config.get("password"))).replace('\n', '')}
+    data = dict(sha256=sha256, tags=tags)
+    h = httplib2.Http(".cache", disable_ssl_certificate_validation=True)    
+    response, content = h.request(CODE_DB_URL_TAG % (config.get("host"), 
+                                                     config.get("port")), "POST", body=urlencode(data), headers=headers)      
+    
+    if not "'status': '200'" in str(response) :
+        log.error("%s --> %s = %s" % (sha256, tags, str(content))) 
+        
+    data = json.loads(content)
+    log.info("%s --> %s = %s" % (sha256, tags, data.get("Status")))
+
 if __name__ == '__main__':    
     # Datenbank
     database = Database()
-    # VxCage-Handler
-    vxCage = VxCageHandler()
-    vxcageEnabled = cfgReporting.getOption("vxcage", "enabled")        
+    # Viper-Handler
+    viper = ViperHandler()
+    viperEnabled = cfgReporting.getOption("viper", "enabled")        
         
     parser = argparse.ArgumentParser(description='Ragpicker Manager')
     subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
@@ -277,11 +291,11 @@ if __name__ == '__main__':
     parser_export.add_argument('-d','--dirname', required=True, help='Export-Directory')
     parser_export.add_argument('-f','--sha256_file', required=True, help='SHA256-File')
     parser_export.add_argument('--json', default=False, help='File in json-format? Default=False')
-    parser_vxcage = subparsers.add_parser('vxcage', help='Exports only the malware files from the VxCage')
-    parser_vxcage.set_defaults(which='vxcage')
-    parser_vxcage.add_argument('-d','--dirname', required=True, help='Export-Directory')
-    parser_vxcage.add_argument('-f','--sha256_file', required=True, help='SHA256-File')
-    parser_vxcage.add_argument('--json', default=False, help='File in json-format? Default=False')
+    parser_viper = subparsers.add_parser('viper', help='Exports only the malware files from the Viper')
+    parser_viper.set_defaults(which='viper')
+    parser_viper.add_argument('-d','--dirname', required=True, help='Export-Directory')
+    parser_viper.add_argument('-f','--sha256_file', required=True, help='SHA256-File')
+    parser_viper.add_argument('--json', default=False, help='File in json-format? Default=False')
     parser_import = subparsers.add_parser('import', help='Import Ragpicker-Data')
     parser_import.set_defaults(which='import')
     parser_import.add_argument('dirname', help='Directory with Ragpicker-data')
@@ -291,6 +305,12 @@ if __name__ == '__main__':
     parser_sort.add_argument('-s','--source_dir', required=True, help='Source-Directory')
     parser_sort.add_argument('-d','--destination_dir', required=True, help='Destination-Directory')
     
+    parser_codeDBTag = subparsers.add_parser('codeDBTag', help='Export Ragpicker-Data')
+    parser_codeDBTag.set_defaults(which='codeDBTag')
+    parser_codeDBTag.add_argument('-t','--tag', required=True, help='CodeDB-Tag Format: \"key1 : value1 ; key2 : value2 ;\" Beispiel \"Quelle: hausintern; Zeus: Version x.y ;\"')
+    parser_codeDBTag.add_argument('-f','--sha256_file', required=True, help='SHA256-File')
+    parser_codeDBTag.add_argument('--json', default=False, help='File in json-format? Default=False')
+
     args = vars(parser.parse_args())
     
     # config logger
@@ -298,21 +318,21 @@ if __name__ == '__main__':
         format='%(levelname)s %(name)s %(module)s:%(lineno)d %(message)s')
     logging.basicConfig(**log_conf)
     
-    # check mongodb and vxcage enebled
+    # check mongodb and viper enebled
     if not database.isRagpickerDBEnabled():
         log.error("Sorry: MongoDB for Ragpicker is not enabled!")
         sys.exit()
-    if not vxcageEnabled:
-        log.error("Sorry: VxCage for Ragpicker is not enabled!")
+    if not viperEnabled:
+        log.error("Sorry: Viper for Ragpicker is not enabled!")
         sys.exit()  
         
-    if args['which'] == 'vxcage':
-        log.info("Exporting VxCage {} {}".format(args['dirname'], args['sha256_file']))
+    if args['which'] == 'viper':
+        log.info("Exporting Viper {} {}".format(args['dirname'], args['sha256_file']))
         dumpDir = os.path.normpath(args['dirname']) + os.sep
         
         for sha256 in iterateSha256File(args['sha256_file'], args['json']):
             try:
-                vxCage.exportVxCage(sha256, dumpDir)  
+                viper.exportViper(sha256, dumpDir)  
             except (Exception) as e:
                 log.error("Export-Error: %s" % e)        
     elif args['which'] == 'export':
@@ -321,9 +341,22 @@ if __name__ == '__main__':
         
         for sha256 in iterateSha256File(args['sha256_file'], args['json']):
             try:
-                rapickerExport(sha256, dumpDir, database, vxCage)      
+                rapickerExport(sha256, dumpDir, database, viper)      
             except (Exception) as e:
                 log.error("Export-Error: %s" % e)
+    elif args['which'] == 'codeDBTag':
+        log.info("codeDBTag {} {}".format(args['tag'], args['sha256_file']))
+        config = cfgReporting.get("codeDB")
+
+        if not config.get("enabled"):
+            log.error("Sorry: CodeDB for Ragpicker is not enabled!")
+            sys.exit()  
+        
+        for sha256 in iterateSha256File(args['sha256_file'], args['json']):
+            try:
+                submitTag(sha256, args['tag'], config)      
+            except (Exception) as e:
+                log.error("CodeDBTag-Error: %s" % e)
     elif args['which'] == 'import':
         log.info("Importing {}".format(args['dirname']))
         impDir = os.path.normpath(args['dirname']) + os.sep
@@ -331,7 +364,7 @@ if __name__ == '__main__':
         for file in os.listdir(impDir):
             if file.endswith(".ragpicker"):
                 try:
-                    ragpickerImport(os.path.join(impDir, file), database, vxCage)
+                    ragpickerImport(os.path.join(impDir, file), database, viper)
                 except (Exception) as e:
                     log.error("Import-Error: %s" % e)
     elif args['which'] == 'sort':
